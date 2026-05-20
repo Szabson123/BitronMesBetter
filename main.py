@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from utils.collector_ends import main_util_collector_program_names
 from utils.lighting_linked_serial import main_lighting_linked_serials
 from utils.check_bin import process_single_msn
-from models import BinRequest
+from utils.batery import main_util_batery_check
+from models import BateryCheckRequest
 from typing import List
 from database import CONNECTION_STRING
 from pyodbc import connect
@@ -36,3 +37,11 @@ async def bin_list_checker(requests: List[str]):
             final_result[sn] = process_single_msn(cursor, sn)
             
     return final_result
+
+
+@app.post('/mes/check-batery/')
+async def check_batery(request_data: BateryCheckRequest):
+    serial_number = request_data.sn
+
+    data = main_util_batery_check(serial_number)
+    return data
