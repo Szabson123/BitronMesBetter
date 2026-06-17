@@ -88,6 +88,9 @@ def get_machine_block_info(phase_id: int, internal_code: int, conn: psycopg.Conn
         cur = conn.cursor()
         data = get_counted_fails(cur, counter, phase_id, internal_code)
     
+    if not data:
+        return {"success": "Mozna produkowac", "status": "can_produce", "message": ""}
+    
     if data[1] >= 3:
         return {"error": "Mamy ponad 3 błędy tego samego typu należy wpisac hasło", "status": "pass_password", "message": f"{data[0]}"}
 
