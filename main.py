@@ -6,7 +6,7 @@ from utils.lighting_linked_serial import main_lighting_linked_serials
 from utils.check_bin import process_single_msn
 from utils.batery import main_util_batery_check
 from utils.blocking_machine import get_assembly_form, get_counted_fails, get_counter, increment_or_create_counter, pass_password
-from models import BateryCheckRequest
+from models import BateryCheckRequest, UnlockRequest
 from typing import List
 from database import CONNECTION_STRING, CONNECTION_STRING_LOCAL_POSTGRES
 from pyodbc import connect
@@ -78,11 +78,7 @@ async def check_batery(request_data: BateryCheckRequest):
 @app.get('/mes/machine-block-info/')
 def get_machine_block_info(phase_id: int, internal_code: int, conn: psycopg.Connection = Depends(get_db)):
 
-    with conn.cursor() as cursor:
-        counter = get_counter(cursor, phase_id)
-        if counter <= 200:
-            increment_or_create_counter(cursor, phase_id)
-        else: counter = 200
+    counter = 200
 
     with connect(CONNECTION_STRING) as conn:
         cur = conn.cursor()
@@ -97,10 +93,12 @@ def get_machine_block_info(phase_id: int, internal_code: int, conn: psycopg.Conn
     return {"success": "Mozna produkowac", "status": "can_produce", "message": ""}
 
 
+
+
 @app.post('/mes/unlock/')
-def unlock_machine(phase_id: int, internal_code: int, password_attempt: str, conn: psycopg.Connection = Depends(get_db)):
+def unlock_machine(data: UnlockRequest, conn: psycopg.Connection = Depends(get_db)):
     with conn.cursor() as cursor:
-        success = pass_password(cursor, phase_id, internal_code, password_attempt)
+        success = pass_password(cursor, data.phase_id, data.internal_code, data.password_attempt)
         
     if not success:
         return {"status": "error", "message": "Błędne hasło!"}

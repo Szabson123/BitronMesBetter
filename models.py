@@ -7,3 +7,9 @@ class BinRequest(BaseModel):
 
 class BateryCheckRequest(BaseModel):
     sn: str
+
+
+class UnlockRequest(BaseModel):
+    phase_id: int
+    internal_code: int
+    password_attempt: str
