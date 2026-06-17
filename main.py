@@ -78,7 +78,11 @@ async def check_batery(request_data: BateryCheckRequest):
 @app.get('/mes/machine-block-info/')
 def get_machine_block_info(phase_id: int, internal_code: int, conn: psycopg.Connection = Depends(get_db)):
 
-    counter = 200
+    with conn.cursor() as cursor:
+        counter = get_counter(cursor, phase_id)
+        if counter <= 200:
+            increment_or_create_counter(cursor, phase_id)
+        else: counter = 200
 
     with connect(CONNECTION_STRING) as conn:
         cur = conn.cursor()
