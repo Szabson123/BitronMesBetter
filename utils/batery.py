@@ -20,9 +20,14 @@ def main_util_batery_check(sn: str):
     today = datetime.now()
     age_difference = today - validate_date
     max_days = 167
+    max_days_no_passivation = 330
 
     if age_difference.days < 0:
         return {"error": "Data z numeru seryjnego jest z przyszłości!"}
+    
+    # if age_difference.days > max_days_no_passivation:
+    #     return {"error": "Bateria jest starsza niż rok"}
+    
     if age_difference.days < max_days:
         return {"success": f"Bateria jest OK. Ma {age_difference.days} dni (mniej niż 5.5 miesiąca)."}
     else:
