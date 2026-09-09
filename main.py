@@ -171,7 +171,7 @@ def get_active_pallet_id(cur: psycopg.Cursor, pallet_number: str) -> Optional[in
     cur.execute(
         """
         SELECT id 
-        FROM your_app_palletfullinfo 
+        FROM aidon_palletfullinfo 
         WHERE pallet_number = %s AND full_used = FALSE 
         ORDER BY created_at DESC 
         LIMIT 1
@@ -186,7 +186,7 @@ def update_pallet_sn_results(cur: psycopg.Cursor, pallet_id: int, items_data: Li
 
     cur.executemany(
         """
-        UPDATE your_app_sntoboard AS sb
+        UPDATE aidon_sntoboard AS sb
         SET 
             ict_result = val.new_res,
             full_result = CASE 
