@@ -112,8 +112,13 @@ def unlock_machine(data: UnlockRequest, conn: psycopg.Connection = Depends(get_d
     return {"status": "success", "message": "Licznik zresetowany, odblokowano."}
 
 
+class PalletInRequest(BaseModel):
+    pallet: str
+
+
 @app.post("/mes/aidon/ict/pallet/in/")
-def aidon_spea_pallet_check_in(pallet: str, conn: psycopg.Connection = Depends(get_db)):
+def aidon_spea_pallet_check_in(payload: PalletInRequest, conn: psycopg.Connection = Depends(get_db)):
+    pallet = payload.pallet
     with conn.cursor(row_factory=dict_row) as cursor:
         data = get_sns_from_pallets(cursor, pallet)
         
@@ -135,3 +140,26 @@ def aidon_spea_pallet_check_in(pallet: str, conn: psycopg.Connection = Depends(g
             for row in data if row["sn"] is not None
         ]
     }
+
+@app.post("/mes/aidon/aoi/")
+def get_recent_aoi_boards():
+    query = """
+        SELECT 
+            bc.dbboardid, 
+            bc.subboardid, 
+            bc.barcode, 
+            b.testtime, 
+            b.reportresult, 
+            b.confirmresult 
+        FROM aoidatav4.t_barcodes bc 
+        JOIN aoidatav4.t_boards b ON bc.dbboardid = b.dbboardid
+        ORDER BY b.dbboardid DESC
+        LIMIT 20;
+    """
+
+    with pymysql.connect(**MYSQL_CONFIG) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query)
+            records = cursor.fetchall()
+
+    return {"count": len(records), "data": records}

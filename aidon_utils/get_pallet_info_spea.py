@@ -20,24 +20,3 @@ def get_sns_from_pallets(cursor: psycopg.Cursor, pallet_number: str) -> List[Dic
     cursor.execute(query, (pallet_number,))
     return cursor.fetchall()
 
-# def get_recent_aoi_boards():
-#     query = """
-#         SELECT 
-#             bc.dbboardid, 
-#             bc.subboardid, 
-#             bc.barcode, 
-#             b.testtime, 
-#             b.reportresult, 
-#             b.confirmresult 
-#         FROM aoidatav4.t_barcodes bc 
-#         JOIN aoidatav4.t_boards b ON bc.dbboardid = b.dbboardid
-#         ORDER BY b.dbboardid DESC
-#         LIMIT 20;
-#     """
-
-#     with pymysql.connect(**MYSQL_CONFIG) as conn:
-#         with conn.cursor() as cursor:
-#             cursor.execute(query)
-#             records = cursor.fetchall()
-
-#     return {"count": len(records), "data": records}
