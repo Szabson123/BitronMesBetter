@@ -1,0 +1,86 @@
+openapi: 3.0.3
+info:
+  title: MES FVT Integration API - Pallet Check
+  version: 1.0.0
+  description: |
+    ### FVT Test Integration (Retrieve pallet data)
+
+    Before starting the test, query the `/mes/aidon/fvt/pallet/` endpoint with the pallet number. 
+    The system verifies the pallet and returns the pallet number alongside each serial number (`SN`), its position on the pallet, and the test result from the previous station (`items`).
+
+servers:
+  - url: http://10.140.113.33
+    description: Production Environment
+
+paths:
+  /mes/aidon/fvt/pallet/:
+    post:
+      summary: Gather pallet data for FVT test
+      description: |
+        Endpoint verifies the pallet number and returns mapped serial numbers with their pallet positions and previous station test results.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PalletRequest'
+      responses:
+        '200':
+          description: Successfully retrieved pallet data with previous station results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PalletResponse'
+
+components:
+  schemas:
+    PalletRequest:
+      type: object
+      required:
+        - palletNumber
+      properties:
+        palletNumber:
+          type: string
+          description: Unique pallet number
+          example: "15028383-15028383-01"
+
+    ItemDetail:
+      type: object
+      required:
+        - position
+        - previous_station_result
+      properties:
+        position:
+          type: string
+          description: Position or side on the pallet
+          example: "side1"
+        previous_station_result:
+          type: string
+          description: Test status/result from the preceding workstation
+          enum:
+            - PASS
+            - FAIL
+          example: "PASS"
+
+    PalletResponse:
+      type: object
+      required:
+        - pallet_number
+        - items
+      properties:
+        pallet_number:
+          type: string
+          description: Pallet number
+          example: "15028383-15028383-01"
+        items:
+          type: object
+          description: Map of serial numbers (keys) to their details including pallet position and previous station test results (values)
+          additionalProperties:
+            $ref: '#/components/schemas/ItemDetail'
+          example:
+            "SN_00000001":
+              position: "side1"
+              previous_station_result: "PASS"
+            "SN_00000002":
+              position: "side2"
+              previous_station_result: "PASS"

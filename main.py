@@ -1,23 +1,27 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, status, HTTPException
 from utils.collector_ends import main_util_collector_program_names
 from utils.lighting_linked_serial import main_lighting_linked_serials
 from utils.check_bin import process_single_msn
 from utils.batery import main_util_batery_check
 from utils.blocking_machine import get_assembly_form, get_counted_fails, get_counter, increment_or_create_counter, pass_password
+
+from aidon_utils.get_pallet_info_spea import get_sns_from_pallets
+
 from models import BateryCheckRequest, UnlockRequest
-from typing import List
-from database import CONNECTION_STRING, CONNECTION_STRING_LOCAL_POSTGRES
+from typing import List, Optional
+from database import CONNECTION_STRING, CONNECTION_STRING_LOCAL_POSTGRES, MYSQL_CONFIG
 from pyodbc import connect
+import pymysql
+
+from pydantic import BaseModel, Field
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-
 pools = {}
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -97,8 +101,6 @@ def get_machine_block_info(phase_id: int, internal_code: int, conn: psycopg.Conn
     return {"success": "Mozna produkowac", "status": "can_produce", "message": ""}
 
 
-
-
 @app.post('/mes/unlock/')
 def unlock_machine(data: UnlockRequest, conn: psycopg.Connection = Depends(get_db)):
     with conn.cursor() as cursor:
@@ -108,3 +110,28 @@ def unlock_machine(data: UnlockRequest, conn: psycopg.Connection = Depends(get_d
         return {"status": "error", "message": "Błędne hasło!"}
         
     return {"status": "success", "message": "Licznik zresetowany, odblokowano."}
+
+
+@app.post("/mes/aidon/ict/pallet/in/")
+def aidon_spea_pallet_check_in(pallet: str, conn: psycopg.Connection = Depends(get_db)):
+    with conn.cursor(row_factory=dict_row) as cursor:
+        data = get_sns_from_pallets(cursor, pallet)
+        
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Nie znaleziono aktywnej palety (full_used=False) o numerze: {pallet}"
+        )
+        
+    return {
+        "pallet_number": pallet,
+        "pallet_id": data[0]["pallet_id"],
+        "db_board_id": data[0]["db_board_id"],
+        "boards": [
+            {
+                "sn": row["sn"],
+                "place_num": row["place_num"],
+            }
+            for row in data if row["sn"] is not None
+        ]
+    }
