@@ -116,6 +116,15 @@ class PalletInRequest(BaseModel):
     pallet: str
 
 
+class SnSRequest(BaseModel):
+    sn: str
+    result: str
+
+class PalletOutRequest(BaseModel):
+    pallet: str
+    items: List[SnSRequest]
+
+
 @app.post("/mes/aidon/ict/pallet/in/")
 def aidon_spea_pallet_check_in(payload: PalletInRequest, conn: psycopg.Connection = Depends(get_db)):
     pallet = payload.pallet
@@ -140,6 +149,15 @@ def aidon_spea_pallet_check_in(payload: PalletInRequest, conn: psycopg.Connectio
             for row in data if row["sn"] is not None
         ]
     }
+
+
+@app.post("/mes/aidon/ict/pallet/out/")
+def aidon_spea_pallet_check_in(payload: PalletOutRequest, conn: psycopg.Connection = Depends(get_db)):
+    pallet = payload.pallet
+        
+    return {"success": f"success {pallet}"}
+
+
 
 @app.post("/mes/aidon/aoi/")
 def get_recent_aoi_boards():
