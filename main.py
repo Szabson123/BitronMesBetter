@@ -179,7 +179,10 @@ def get_active_pallet_id(cur: psycopg.Cursor, pallet_number: str) -> Optional[in
         (pallet_number,)
     )
     row = cur.fetchone()
-    return row[0] if row else None
+    if not row:
+        return None
+    
+    return row["id"] if isinstance(row, dict) else row[0]
 
 
 def update_pallet_sn_results(cur: psycopg.Cursor, pallet_id: int, items_data: List[Tuple[str, bool]]) -> None:
