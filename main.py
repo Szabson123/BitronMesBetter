@@ -10,7 +10,7 @@ from utils.blocking_machine import get_assembly_form, get_counted_fails, get_cou
 from aidon_utils.get_pallet_info_spea import get_sns_from_pallets
 
 from models import BateryCheckRequest, UnlockRequest
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from database import CONNECTION_STRING, CONNECTION_STRING_LOCAL_POSTGRES, MYSQL_CONFIG
 from pyodbc import connect
 import pymysql
@@ -134,7 +134,7 @@ def aidon_spea_pallet_check_in(payload: PalletInRequest, conn: psycopg.Connectio
     if not data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Nie znaleziono aktywnej palety (full_used=False) o numerze: {pallet}"
+            error=f"Pallet not found: {pallet}"
         )
         
     return {
@@ -151,12 +151,84 @@ def aidon_spea_pallet_check_in(payload: PalletInRequest, conn: psycopg.Connectio
     }
 
 
+def normalize_and_validate_items(items: List[SnSRequest]) -> List[Tuple[str, bool]]:
+    normalized = []
+    for item in items:
+        res = item.result.strip().upper()
+        if res not in ("PASS", "FAIL"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "STATUS": "ERROR",
+                    "MESSAGE": f"INVALID RESULT '{item.result}' FOR SN {item.sn}. MUST BE PASS OR FAIL"
+                }
+            )
+        normalized.append((item.sn, res == "PASS"))
+    return normalized
+
+
+def get_active_pallet_id(cur: psycopg.Cursor, pallet_number: str) -> Optional[int]:
+    cur.execute(
+        """
+        SELECT id 
+        FROM your_app_palletfullinfo 
+        WHERE pallet_number = %s AND full_used = FALSE 
+        ORDER BY created_at DESC 
+        LIMIT 1
+        """,
+        (pallet_number,)
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def update_pallet_sn_results(cur: psycopg.Cursor, pallet_id: int, items_data: List[Tuple[str, bool]]) -> None:
+
+    cur.executemany(
+        """
+        UPDATE your_app_sntoboard AS sb
+        SET 
+            ict_result = val.new_res,
+            full_result = CASE 
+                WHEN sb.full_result IS FALSE THEN FALSE
+                ELSE val.new_res
+            END
+        FROM (VALUES (%s, %s::boolean)) AS val(sn, new_res)
+        WHERE sb.pallet_id = %s AND sb.sn = val.sn
+        """,
+        [(sn, res, pallet_id) for sn, res in items_data]
+    )
+
+
 @app.post("/mes/aidon/ict/pallet/out/")
 def aidon_spea_pallet_check_in(payload: PalletOutRequest, conn: psycopg.Connection = Depends(get_db)):
-    pallet = payload.pallet
-        
-    return {"success": f"success {pallet}"}
 
+    pallet_num = payload.pallet.strip().upper()
+
+    if not payload.items:
+        return {
+            "STATUS": "SUCCESS",
+            "MESSAGE": f"NO ITEMS TO PROCESS FOR PALLET {pallet_num}"
+        }
+
+    items_to_update = normalize_and_validate_items(payload.items)
+
+    with conn.cursor() as cur:
+        pallet_id = get_active_pallet_id(cur, pallet_num)
+        
+        if pallet_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "STATUS": "ERROR",
+                    "MESSAGE": f"ACTIVE PALLET {pallet_num} NOT FOUND"
+                }
+            )
+
+        update_pallet_sn_results(cur, pallet_id, items_to_update)
+        conn.commit()
+
+    return {"success": f"success, {pallet_num}"}
 
 
 @app.post("/mes/aidon/aoi/")

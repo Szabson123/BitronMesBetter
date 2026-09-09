@@ -1,68 +1,105 @@
 openapi: 3.0.3
 info:
-  title: MES FVT Integration API - Pallet Check
-  version: 1.0.0
+  title: MES Integration API - Pallet Verification
+  version: 1.2.0
   description: |
-    ### FVT Test Integration (Retrieve pallet data)
+    ### MES Pallet Verification API across Production Lines
 
-    Before starting the test, query the `/mes/aidon/fvt/pallet/` endpoint with the pallet number. 
-    The system verifies the pallet and returns the pallet number alongside each serial number (`SN`), its position on the pallet, and the test result from the previous station (`items`).
+    Endpoints dedicated to querying pallet contents and testing prerequisites before operations start:
+    * **FCT Metrology Line (`/mes/aidon/fct/metrology/pallet/`)**: Metrology verification station. Validates pallet status and returns a map of serial numbers with their pallet slot and upstream test results. Slot indices (`place_num`) always start from 1.
+    * **FCT Application Line (`/mes/aidon/fct/application/pallet/`)**: Application test station. Validates pallets and returns assigned boards with fixture slot indices (`place_num`), starting from 1.
 
 servers:
   - url: http://10.140.113.33
     description: Production Environment
 
 paths:
-  /mes/aidon/fvt/pallet/:
+  /mes/aidon/fct/metrology/pallet/:
     post:
-      summary: Gather pallet data for FVT test
+      summary: Pallet check for FCT Metrology line
       description: |
-        Endpoint verifies the pallet number and returns mapped serial numbers with their pallet positions and previous station test results.
+        Dedicated to the **FCT Metrology production line**. Verifies pallet validity and returns loaded serial numbers mapped to their pallet slot (1-based index) and previous station test status.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PalletRequest'
+              $ref: '#/components/schemas/FVTPalletRequest'
       responses:
         '200':
-          description: Successfully retrieved pallet data with previous station results
+          description: Pallet verified successfully
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PalletResponse'
+                $ref: '#/components/schemas/FVTPalletResponse'
+        '404':
+          description: Pallet not found or inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+              example:
+                detail: "Active pallet not found (full_used=False): 15028383-15028383-01"
+
+  /mes/aidon/fct/application/pallet/:
+    post:
+      summary: Pallet check-in for FCT Application line
+      description: |
+        Dedicated to the **FCT Application production line**. Queries an active pallet (`full_used=False`) and returns all mounted boards alongside their fixture slot numbers (1-based index).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ICTPalletInRequest'
+      responses:
+        '200':
+          description: Pallet checked in successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ICTPalletInResponse'
+        '404':
+          description: Pallet not found or inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+              example:
+                detail: "Active pallet not found (full_used=False): 15028383-15028383-01"
 
 components:
   schemas:
-    PalletRequest:
+    FVTPalletRequest:
       type: object
       required:
-        - palletNumber
+        - pallet_number
       properties:
-        palletNumber:
+        pallet_number:
           type: string
-          description: Unique pallet number
+          description: Unique pallet barcode/number
           example: "15028383-15028383-01"
 
-    ItemDetail:
+    FVTItemDetail:
       type: object
       required:
-        - position
+        - place_num
         - previous_station_result
       properties:
-        position:
-          type: string
-          description: Position or side on the pallet
-          example: "side1"
+        place_num:
+          type: integer
+          minimum: 1
+          description: Board slot position / fixture socket index (1-based index, always starts from 1)
+          example: 1
         previous_station_result:
           type: string
-          description: Test status/result from the preceding workstation
+          description: Test result from the preceding production station
           enum:
             - PASS
             - FAIL
           example: "PASS"
 
-    PalletResponse:
+    FVTPalletResponse:
       type: object
       required:
         - pallet_number
@@ -70,17 +107,69 @@ components:
       properties:
         pallet_number:
           type: string
-          description: Pallet number
+          description: Unique pallet identifier
           example: "15028383-15028383-01"
         items:
           type: object
-          description: Map of serial numbers (keys) to their details including pallet position and previous station test results (values)
+          description: Dictionary of board serial numbers mapped to their placement and test status
           additionalProperties:
-            $ref: '#/components/schemas/ItemDetail'
+            $ref: '#/components/schemas/FVTItemDetail'
           example:
             "SN_00000001":
-              position: "side1"
+              place_num: 1
               previous_station_result: "PASS"
             "SN_00000002":
-              position: "side2"
+              place_num: 2
               previous_station_result: "PASS"
+
+    ICTPalletInRequest:
+      type: object
+      required:
+        - pallet
+      properties:
+        pallet:
+          type: string
+          description: Scanned pallet barcode
+          example: "15028383-15028383-01"
+
+    ICTBoardItem:
+      type: object
+      required:
+        - sn
+        - place_num
+      properties:
+        sn:
+          type: string
+          description: Board serial number
+          example: "SN_00000001"
+        place_num:
+          type: integer
+          minimum: 1
+          description: Fixture slot or socket index (1-based index, always starts from 1)
+          example: 1
+
+    ICTPalletInResponse:
+      type: object
+      required:
+        - pallet_number
+        - boards
+      properties:
+        pallet_number:
+          type: string
+          description: Scanned pallet identifier
+          example: "15028383-15028383-01"
+        boards:
+          type: array
+          description: List of boards currently loaded onto the pallet
+          items:
+            $ref: '#/components/schemas/ICTBoardItem'
+
+    HTTPError:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: Error description returned by the MES service
+          example: "Active pallet not found (full_used=False): 15028383-15028383-01"
