@@ -134,7 +134,7 @@ def aidon_spea_pallet_check_in(payload: PalletInRequest, conn: psycopg.Connectio
     if not data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            error=f"Pallet not found: {pallet}"
+            detail=f"Pallet not found: {pallet}"
         )
         
     return {
