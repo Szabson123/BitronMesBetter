@@ -10,7 +10,7 @@ from utils.blocking_machine import get_assembly_form, get_counted_fails, get_cou
 from aidon_utils.get_pallet_info_spea import get_sns_from_pallets
 
 from models import BateryCheckRequest, UnlockRequest
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Literal, Dict
 from database import CONNECTION_STRING, CONNECTION_STRING_LOCAL_POSTGRES, MYSQL_CONFIG
 from pyodbc import connect
 import pymysql
@@ -123,6 +123,23 @@ class SnSRequest(BaseModel):
 class PalletOutRequest(BaseModel):
     pallet: str
     items: List[SnSRequest]
+
+
+class FVTPalletRequest(BaseModel):
+    pallet_number: str = Field(..., example="15028383-15028383-01")
+
+
+class FVTItemDetail(BaseModel):
+    place_num: int = Field(..., ge=1, example=1)
+    previous_station_result: Literal["PASS", "FAIL"] = Field(..., example="PASS")
+
+
+class FVTPalletResponse(BaseModel):
+    pallet_number: str = Field(..., example="15028383-15028383-01")
+    items: Dict[str, FVTItemDetail]
+
+class HTTPError(BaseModel):
+    detail: str
 
 
 @app.post("/mes/aidon/ict/pallet/in/")
@@ -256,3 +273,55 @@ def get_recent_aoi_boards():
             records = cursor.fetchall()
 
     return {"count": len(records), "data": records}
+
+
+@app.post("/mes/aidon/fct/metrology/pallet/")
+def aidon_fct_metrology_pallet_check(payload: FVTPalletRequest, conn: psycopg.Connection = Depends(get_db)):
+    pallet_num = payload.pallet_number.strip().upper()
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, pallet_number 
+            FROM aidon_palletfullinfo 
+            WHERE UPPER(pallet_number) = %s AND full_used = FALSE 
+            ORDER BY created_at DESC 
+            LIMIT 1
+            """,
+            (pallet_num,),
+        )
+        pallet_row = cur.fetchone()
+
+        if not pallet_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Active pallet not found (full_used=False): {payload.pallet_number}",
+            )
+
+        pallet_id = pallet_row["id"] if isinstance(pallet_row, dict) else pallet_row[0]
+
+        cur.execute(
+            """
+            SELECT sn, place_num, full_result 
+            FROM aidon_sntoboard 
+            WHERE pallet_id = %s AND sn IS NOT NULL
+            ORDER BY place_num ASC
+            """,
+            (pallet_id,),
+        )
+        rows = cur.fetchall()
+
+    items_dict = {}
+    for row in rows:
+        sn = row["sn"]
+        place_num = row["place_num"]
+        full_res = row["full_result"]
+
+        prev_result = "PASS" if full_res is True else "FAIL"
+
+        items_dict[sn] = FVTItemDetail(
+            place_num=place_num,
+            previous_station_result=prev_result,
+        )
+
+    return FVTPalletResponse(pallet_number=payload.pallet_number, items=items_dict,)
