@@ -29,7 +29,12 @@ from psycopg_pool import ConnectionPool
 
 pools = {}
 scheduler = AsyncIOScheduler()
+
 logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 def run_aoi_sync_job():
     try:
