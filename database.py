@@ -1,6 +1,7 @@
 from config import settings
 import pymysql
 
+
 CONNECTION_STRING = (
     f'Driver={{ODBC Driver 17 for SQL Server}};'
     f'Server={settings.eclipse_host};'
@@ -14,16 +15,28 @@ CONNECTION_STRING_LOCAL_POSTGRES = (
     f"@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_database}"
 )
 
-CONNECTION_STRING_MYSQL = (
-    f"mysql+pymysql://{settings.mysql_user}:{settings.mysql_password}"
-    f"@{settings.mysql_host}:{settings.mysql_port}/{settings.mysql_database}"
-)
+MYSQL_DATABASES = {
+    "aoi_metrology_aidon": {
+        "host": settings.metrology_mysql_host,
+        "user": settings.metrology_mysql_user,
+        "password": settings.metrology_mysql_password,
+        "database": settings.metrology_mysql_database,
+        "port": settings.metrology_mysql_port
+    },
+    "aoi_application_aidon": {
+        "host": settings.application_mysql_host,
+        "user": settings.application_mysql_user,
+        "password": settings.application_mysql_password,
+        "database": settings.application_mysql_database,
+        "port": settings.application_mysql_port
+    },
+}
 
 MYSQL_CONFIG = {
-    "host": settings.mysql_host,
-    "user": settings.mysql_user,
-    "password": settings.mysql_password,
-    "database": settings.mysql_database,
-    "port": settings.mysql_port,
+    "host": settings.application_mysql_host,
+    "user": settings.application_mysql_user,
+    "password": settings.application_mysql_password,
+    "database": settings.application_mysql_database,
+    "port": settings.application_mysql_port,
     "cursorclass": pymysql.cursors.DictCursor,
 }

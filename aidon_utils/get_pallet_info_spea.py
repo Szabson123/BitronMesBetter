@@ -4,6 +4,14 @@ import psycopg
 
 def get_sns_from_pallets(cursor: psycopg.Cursor, pallet_number: str) -> List[Dict[str, Any]]:
     query = """
+        WITH latest_pallet AS (
+            SELECT id, db_board_id, pallet_number
+            FROM aidon_palletfullinfo
+            WHERE pallet_number = %s 
+              AND full_used = FALSE
+            ORDER BY id DESC
+            LIMIT 1
+        )
         SELECT 
             p.id AS pallet_id,
             p.db_board_id,
@@ -11,12 +19,9 @@ def get_sns_from_pallets(cursor: psycopg.Cursor, pallet_number: str) -> List[Dic
             s.id AS sn_to_board_id,
             s.sn,
             s.place_num
-        FROM aidon_palletfullinfo p
+        FROM latest_pallet p
         LEFT JOIN aidon_sntoboard s ON s.pallet_id = p.id
-        WHERE p.pallet_number = %s 
-          AND p.full_used = FALSE
         ORDER BY s.place_num ASC;
     """
     cursor.execute(query, (pallet_number,))
     return cursor.fetchall()
-

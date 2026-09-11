@@ -17,11 +17,17 @@ class Settings(BaseSettings):
     postgres_port: str = Field(alias="DB_PORT")
 
     # MySQL
-    mysql_host: str = Field(default="localhost", alias="MYSQL_HOST")
-    mysql_user: str = Field(alias="MYSQL_USER")
-    mysql_password: str = Field(alias="MYSQL_PASSWORD")
-    mysql_database: str = Field(alias="MYSQL_DATABASE")
-    mysql_port: int = Field(default=3306, alias="MYSQL_PORT")
+    metrology_mysql_host: str = Field(default="localhost", alias="METROLOGY_MYSQL_HOST")
+    metrology_mysql_user: str = Field(alias="METROLOGY_MYSQL_USER")
+    metrology_mysql_password: str = Field(alias="METROLOGY_MYSQL_PASSWORD")
+    metrology_mysql_database: str = Field(alias="METROLOGY_MYSQL_DATABASE")
+    metrology_mysql_port: int = Field(default=3306, alias="METROLOGY_MYSQL_PORT")
+
+    application_mysql_host: str = Field(default="localhost", alias="APPLICATION_MYSQL_HOST")
+    application_mysql_user: str = Field(alias="APPLICATION_MYSQL_USER")
+    application_mysql_password: str = Field(alias="APPLICATION_MYSQL_PASSWORD")
+    application_mysql_database: str = Field(alias="APPLICATION_MYSQL_DATABASE")
+    application_mysql_port: int = Field(default=3306, alias="APPLICATION_MYSQL_PORT")
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
