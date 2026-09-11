@@ -10,6 +10,7 @@ from utils.blocking_machine import get_assembly_form, get_counted_fails, get_cou
 
 from collections import defaultdict
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pymysql.cursors import DictCursor
 
 from aidon_utils.get_pallet_info_spea import get_sns_from_pallets
@@ -21,14 +22,33 @@ from pyodbc import connect
 import pymysql
 
 from pydantic import BaseModel, Field
-
+import asyncio
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 pools = {}
-
+scheduler = AsyncIOScheduler()
 logger = logging.getLogger(__name__)
+
+def run_aoi_sync_job():
+    try:
+        pool = pools.get("postgres")
+        if not pool:
+            logger.warning("Pula połączeń Postgres nie jest jeszcze gotowa.")
+            return
+
+        with pool.connection() as pg_conn:
+            pg_conn.row_factory = dict_row
+            process_all_aoi_databases(pg_conn=pg_conn)
+
+    except Exception as e:
+        logger.error("Błąd podczas cyklicznej synchronizacji AOI: %s", e, exc_info=True)
+
+
+async def aoi_sync_task():
+    await asyncio.to_thread(run_aoi_sync_job)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,8 +58,24 @@ async def lifespan(app: FastAPI):
         max_size=10,
         open=True
     )
+
+    scheduler.add_job(
+        aoi_sync_task,
+        trigger="interval",
+        seconds=5,
+        id="aoi_sync_job",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.start()
+    logger.info("Scheduler AOI uruchomiony (interwał: 5s).")
+
     yield
+
+    scheduler.shutdown(wait=False)
     pools["postgres"].close()
+    logger.info("Scheduler i pule bazodanowe zostały zamknięte.")
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -370,15 +406,16 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
 
             pallet_id = pallet_row["id"] if isinstance(pallet_row, dict) else pallet_row[0]
 
+            sorted_boards = sorted(board_records, key=lambda x: int(x.get("subboardid", 0)))
             sn_entries = []
-            for row in board_records:
+
+            for row in sorted_boards:
                 sub_id = int(row.get("subboardid", 0))
                 barcode = row.get("barcode")
 
                 if sub_id > 0 and barcode:
                     report_res = row.get("reportresult")
                     confirm_res = row.get("confirmresult")
-
                     aoi_pass = (report_res == 1) or (confirm_res == 1)
 
                     sn_entries.append((
@@ -408,11 +445,7 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
 
         pg_conn.commit()
 
-    logger.info(
-        "[%s] Utworzono %d nowych palet z powiązanymi SN.",
-        product,
-        inserted_pallets_count
-    )
+    logger.info("[%s] Utworzono %d nowych palet z powiązanymi SN.", product, inserted_pallets_count)
     return inserted_pallets_count
 
 
@@ -424,11 +457,18 @@ def get_latest_db_board_id_for_product(cur: psycopg.Cursor, product_host: str) -
 
 def process_single_database(pg_conn: psycopg.Connection, db_key: str, db_config: dict, last_db_board_id: int):
     query = """
-        SELECT bc.dbboardid, bc.subboardid, bc.barcode, b.testtime, b.reportresult, b.confirmresult 
+        SELECT 
+            bc.dbboardid, 
+            bc.subboardid, 
+            bc.barcode, 
+            b.testtime, 
+            b.reportresult, 
+            b.confirmresult 
         FROM aoidatav4.t_barcodes bc 
         JOIN aoidatav4.t_boards b ON bc.dbboardid = b.dbboardid
         WHERE b.dbboardid > %s
-        ORDER BY b.dbboardid ASC;
+        ORDER BY b.dbboardid ASC
+        LIMIT 500;
     """
     host_identifier = db_config.get("host", db_key)
 
@@ -438,21 +478,23 @@ def process_single_database(pg_conn: psycopg.Connection, db_key: str, db_config:
                 cursor.execute(query, (last_db_board_id,))
                 records = cursor.fetchall()
 
-        if not records:
-            logger.info("[%s (%s)] Brak nowych danych dla db_board_id > %d.", db_key, host_identifier, last_db_board_id)
-            return {"database": db_key, "product": host_identifier, "status": "no_new_data", "count": 0}
+            if not records:
+                return {"database": db_key, "product": host_identifier, "status": "no_new_data", "count": 0}
 
-        logger.info("[%s (%s)] Znaleziono %d nowych rekordów. Zapis do bazy...", db_key, host_identifier, len(records))
-        created_count = create_new_pallet(pg_conn=pg_conn, records=records, product=host_identifier, db_name=db_key)
+            logger.info("[%s (%s)] Znaleziono %d nowych rekordów. Zapis do Postgresa...", db_key, host_identifier, len(records))
+            created_count = create_new_pallet(pg_conn=pg_conn, records=records, product=host_identifier, db_name=db_key)
 
-        return {
-            "database": db_key, "product": host_identifier, "status": "processed",
-            "records_fetched": len(records), "pallets_created": created_count,
-            "last_processed_id": records[-1]["dbboardid"]
-        }
+            return {
+                "database": db_key,
+                "product": host_identifier,
+                "status": "processed",
+                "records_fetched": len(records),
+                "pallets_created": created_count,
+                "last_processed_id": records[-1]["dbboardid"]
+            }
 
     except pymysql.MySQLError as e:
-        logger.error("[%s (%s)] Błąd MySQL: %s", db_key, host_identifier, e)
+        logger.error("[%s (%s)] Błąd połączenia/zapytania MySQL: %s", db_key, host_identifier, e)
         return {"database": db_key, "product": host_identifier, "status": "error", "error": str(e)}
 
 
