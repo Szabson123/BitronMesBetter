@@ -484,9 +484,10 @@ def process_single_database(pg_conn: psycopg.Connection, db_key: str, db_config:
                 records = cursor.fetchall()
 
             if not records:
+                logger.debug("[%s] Brak nowych wpisów (dbboardid > %s).", host_identifier, last_db_board_id)
                 return {"database": db_key, "product": host_identifier, "status": "no_new_data", "count": 0}
 
-            logger.info("[%s (%s)] Znaleziono %d nowych rekordów. Zapis do Postgresa...", db_key, host_identifier, len(records))
+            logger.info("[%s] Pobrano %d wierszy z AOI. Rozpoczynam zapis...", host_identifier, len(records))
             created_count = create_new_pallet(pg_conn=pg_conn, records=records, product=host_identifier, db_name=db_key)
 
             return {
@@ -499,7 +500,7 @@ def process_single_database(pg_conn: psycopg.Connection, db_key: str, db_config:
             }
 
     except pymysql.MySQLError as e:
-        logger.error("[%s (%s)] Błąd połączenia/zapytania MySQL: %s", db_key, host_identifier, e)
+        logger.error("[%s] Błąd MySQL: %s", host_identifier, e)
         return {"database": db_key, "product": host_identifier, "status": "error", "error": str(e)}
 
 
