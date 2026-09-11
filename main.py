@@ -484,7 +484,7 @@ def process_single_database(pg_conn: psycopg.Connection, db_key: str, db_config:
                 records = cursor.fetchall()
 
             if not records:
-                logger.debug("[%s] Brak nowych wpisów (dbboardid > %s).", host_identifier, last_db_board_id)
+                logger.info("[%s] Brak nowych wpisów (dbboardid > %s).", host_identifier, last_db_board_id)
                 return {"database": db_key, "product": host_identifier, "status": "no_new_data", "count": 0}
 
             logger.info("[%s] Pobrano %d wierszy z AOI. Rozpoczynam zapis...", host_identifier, len(records))
