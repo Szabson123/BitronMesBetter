@@ -558,14 +558,13 @@ class FWKGoldensPayload(BaseModel):
 
 
 @app.post("/mes/goldens/fwk/check/", status_code=status.HTTP_200_OK)
-def fwk_master_sample_check(
-    payload: FWKGoldensPayload, 
-    conn: psycopg.Connection = Depends(get_db)
-):
+def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection = Depends(get_db)):
     goldens_map: dict[str, str] = get_goldens_for_test(conn, payload.internal_code)
+    
+    clean_sn = payload.sn.strip()
 
-    if payload.sn in goldens_map:
-        golden_type = goldens_map[payload.sn]
+    if clean_sn in goldens_map:
+        golden_type = goldens_map[clean_sn]
         return {
             "status": status.HTTP_200_OK,
             "comment": f"Testujesz Wzorzec ({golden_type})",
@@ -586,7 +585,7 @@ def fwk_master_sample_check(
         pos_in_rack=payload.site
     )
 
-    required_types = {"good", "bad"}
+    required_types = {"pass", "fail"}
     has_both_goldens = required_types.issubset(tested_types)
 
     if not has_both_goldens:

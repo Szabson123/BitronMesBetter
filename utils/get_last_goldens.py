@@ -62,8 +62,8 @@ def get_last_goldens_check(
 def get_goldens_for_test(conn, internal_code: str) -> dict[str, str]:
     query = """
         SELECT 
-            TRIM(ms.sn),
-            tn.compute_name
+            TRIM(ms.sn) AS sn,
+            TRIM(tn.compute_name) AS compute_name
         FROM public.goldensample_mastersample ms
         INNER JOIN public.goldensample_typename tn 
             ON ms.master_type_id = tn.id
@@ -77,4 +77,5 @@ def get_goldens_for_test(conn, internal_code: str) -> dict[str, str]:
         cur.execute(query, (str(internal_code).strip(),))
         rows = cur.fetchall()
 
-    return dict(rows)
+    # Zwraca: {'04926000024C21424815': 'pass', '04926000020C21424815': 'fail'}
+    return {str(row[0]).strip(): str(row[1]).strip() for row in rows}
