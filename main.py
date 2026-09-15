@@ -7,7 +7,7 @@ from utils.lighting_linked_serial import main_lighting_linked_serials
 from utils.check_bin import process_single_msn
 from utils.batery import main_util_batery_check
 from utils.blocking_machine import get_assembly_form, get_counted_fails, get_counter, increment_or_create_counter, pass_password
-from utils.get_last_goldens import get_last_goldens_check, get_assembly_form_id, get_goldens_for_test
+from utils.get_last_goldens import get_last_goldens_check, get_goldens_for_test
 
 from collections import defaultdict
 
