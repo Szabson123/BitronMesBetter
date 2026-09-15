@@ -571,17 +571,10 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
             "result": True
         }
 
-    assembly_form_id = get_assembly_form_id(payload.internal_code, payload.machine_id)
-    if not assembly_form_id:
-        return {
-            "status": status.HTTP_200_OK,
-            "comment": f"Nie znaleziono AssemblyFormID dla maszyny {payload.machine_id} i kodu {payload.internal_code}",
-            "result": False
-        }
 
     tested_types: set[str] = get_last_goldens_check(
         goldens_map=goldens_map,
-        assembly_form_id=assembly_form_id,
+        assembly_form_id=payload.internal_code,
         pos_in_rack=payload.site
     )
 

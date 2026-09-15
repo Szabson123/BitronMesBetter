@@ -1,23 +1,6 @@
 import pyodbc 
 from database import CONNECTION_STRING
 
-def get_assembly_form_id(internal_code: str, machine_id: str) -> int | None:
-    query = """
-        SELECT TOP (1) pm.[AssemblyFormID]
-        FROM [Eclipse].[dbo].[ProcessesSteps] ps
-        INNER JOIN [Eclipse].[dbo].[ProcessesMatrix] pm
-            ON ps.[ProcessStepID] = pm.[ProcessStepID]
-        WHERE ps.[InternalCode] = ?
-          AND pm.[PhaseId] = ?
-        ORDER BY pm.[ProcessesMatrixID] DESC;
-    """
-    with pyodbc.connect(CONNECTION_STRING) as mssql_conn:
-        with mssql_conn.cursor() as cur:
-            cur.execute(query, (internal_code, machine_id))
-            row = cur.fetchone()
-            return row[0] if row else None
-
-
 def get_last_goldens_check(
     goldens_map: dict[str, str], 
     assembly_form_id: int, 
@@ -27,7 +10,6 @@ def get_last_goldens_check(
         return set()
 
     golden_sns = list(goldens_map.keys())
-    # W pyodbc parametrem jest '?' zamiast '%s'
     placeholders = ", ".join(["?"] * len(golden_sns))
 
     query = f"""
@@ -38,7 +20,7 @@ def get_last_goldens_check(
         FROM [Measure].[dbo].[HeaderDataLog]
         WHERE [MSN] IN ({placeholders})
           AND [PosinRack] = ?
-          AND [AssemblyFormID] = ?
+          AND [IdParts] = ?
           AND [TestDateTime] >= DATEADD(hour, -8, GETDATE())
         ORDER BY [TestDateTime] DESC;
     """
