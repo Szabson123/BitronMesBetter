@@ -77,5 +77,17 @@ def get_goldens_for_test(conn, internal_code: str) -> dict[str, str]:
         cur.execute(query, (str(internal_code).strip(),))
         rows = cur.fetchall()
 
-    # Zwraca: {'04926000024C21424815': 'pass', '04926000020C21424815': 'fail'}
-    return {str(row[0]).strip(): str(row[1]).strip() for row in rows}
+    goldens = {}
+    for row in rows:
+        # Obsługa zarówno słownika (dict_row), jak i krotki (tuple)
+        if isinstance(row, dict):
+            sn = str(row.get("sn", "")).strip()
+            c_name = str(row.get("compute_name", "")).strip()
+        else:
+            sn = str(row[0]).strip()
+            c_name = str(row[1]).strip()
+
+        if sn:
+            goldens[sn] = c_name
+
+    return goldens
