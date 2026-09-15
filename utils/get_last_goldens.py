@@ -1,0 +1,86 @@
+import pyodbc 
+from database import CONNECTION_STRING
+
+def get_assembly_form_id(internal_code: str, machine_id: str) -> int | None:
+    query = """
+        SELECT TOP (1) pm.[AssemblyFormID]
+        FROM [Eclipse].[dbo].[ProcessesSteps] ps
+        INNER JOIN [Eclipse].[dbo].[ProcessesMatrix] pm
+            ON ps.[ProcessStepID] = pm.[ProcessStepID]
+        WHERE ps.[InternalCode] = ?
+          AND pm.[PhaseId] = ?
+        ORDER BY pm.[ProcessesMatrixID] DESC;
+    """
+    with pyodbc.connect(CONNECTION_STRING) as mssql_conn:
+        with mssql_conn.cursor() as cur:
+            cur.execute(query, (internal_code, machine_id))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+
+def get_last_goldens_check(
+    goldens_map: dict[str, str], 
+    assembly_form_id: int, 
+    pos_in_rack: int
+) -> set[str]:
+    if not goldens_map:
+        return set()
+
+    golden_sns = list(goldens_map.keys())
+    # W pyodbc parametrem jest '?' zamiast '%s'
+    placeholders = ", ".join(["?"] * len(golden_sns))
+
+    query = f"""
+        SELECT 
+            [MSN],
+            [Result],
+            [TestDateTime]
+        FROM [Measure].[dbo].[HeaderDataLog]
+        WHERE [MSN] IN ({placeholders})
+          AND [PosinRack] = ?
+          AND [AssemblyFormID] = ?
+          AND [TestDateTime] >= DATEADD(hour, -8, GETDATE())
+        ORDER BY [TestDateTime] DESC;
+    """
+
+    params = [*golden_sns, pos_in_rack, assembly_form_id]
+
+    with pyodbc.connect(CONNECTION_STRING) as mssql_conn:
+        with mssql_conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+    tested_types = set()
+    for row in rows:
+        msn = row[0]
+        sample_type = goldens_map.get(msn)
+        if sample_type:
+            tested_types.add(sample_type)
+
+    return tested_types
+
+def get_goldens_for_test(conn, internal_code: str) -> dict[str, str]:
+    """
+    Zwraca słownik wzorców dla danego kodu wewnętrznego w formacie:
+    {'04926000020C21424815': 'good', '04926000024C21424815': 'bad'}
+    """
+    query = """
+        SELECT 
+            ms.sn,
+            tn.compute_name
+        FROM public.goldensample_mastersample ms
+        INNER JOIN public.goldensample_typename tn 
+            ON ms.master_type_id = tn.id
+        INNER JOIN public.goldensample_mastersample_endcodes msec 
+            ON ms.id = msec.mastersample_id
+        INNER JOIN public.goldensample_endcode ec 
+            ON msec.endcode_id = ec.id
+        WHERE ec.code = %s
+          AND ms.expire_date >= CURRENT_DATE;
+    """
+    with conn.cursor() as cur:
+        cur.execute(query, (internal_code,))
+        rows = cur.fetchall()
+
+    # Zamienia listę krotek [(sn, compute_name), ...] na słownik {sn: compute_name}
+    return dict(rows)

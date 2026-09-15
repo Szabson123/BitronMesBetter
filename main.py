@@ -1,12 +1,13 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, status, HTTPException
+from fastapi import FastAPI, Depends, status, HTTPException, Response
 from utils.collector_ends import main_util_collector_program_names
 from utils.lighting_linked_serial import main_lighting_linked_serials
 from utils.check_bin import process_single_msn
 from utils.batery import main_util_batery_check
 from utils.blocking_machine import get_assembly_form, get_counted_fails, get_counter, increment_or_create_counter, pass_password
+from utils.get_last_goldens import get_last_goldens_check, get_assembly_form_id, get_goldens_for_test
 
 from collections import defaultdict
 
@@ -547,3 +548,56 @@ def get_recent_aoi_boards():
             records = cursor.fetchall()
 
     return {"count": len(records), "data": records}
+
+
+class FWKGoldensPayload(BaseModel):
+    sn: str
+    site: int
+    machine_id: str
+    internal_code: str
+
+
+@app.post("/mes/goldens/fwk/check/", status_code=status.HTTP_200_OK)
+def fwk_master_sample_check(
+    payload: FWKGoldensPayload, 
+    conn: psycopg.Connection = Depends(get_db)
+):
+    goldens_map: dict[str, str] = get_goldens_for_test(conn, payload.internal_code)
+
+    if payload.sn in goldens_map:
+        golden_type = goldens_map[payload.sn]
+        return {
+            "status": status.HTTP_200_OK,
+            "comment": f"Testujesz Wzorzec ({golden_type})",
+            "result": True
+        }
+
+    assembly_form_id = get_assembly_form_id(payload.internal_code, payload.machine_id)
+    if not assembly_form_id:
+        return {
+            "status": status.HTTP_200_OK,
+            "comment": f"Nie znaleziono AssemblyFormID dla maszyny {payload.machine_id} i kodu {payload.internal_code}",
+            "result": False
+        }
+
+    tested_types: set[str] = get_last_goldens_check(
+        goldens_map=goldens_map,
+        assembly_form_id=assembly_form_id,
+        pos_in_rack=payload.site
+    )
+
+    required_types = {"good", "bad"}
+    has_both_goldens = required_types.issubset(tested_types)
+
+    if not has_both_goldens:
+        return {
+            "status": status.HTTP_200_OK,
+            "comment": "Nalezy przetestowac wzorce [minelo wiecej niz 8godzin]",
+            "result": False
+        }
+
+    return {
+        "status": status.HTTP_200_OK,
+        "comment": "Pass",
+        "result": True
+    }
