@@ -60,13 +60,9 @@ def get_last_goldens_check(
     return tested_types
 
 def get_goldens_for_test(conn, internal_code: str) -> dict[str, str]:
-    """
-    Zwraca słownik wzorców dla danego kodu wewnętrznego w formacie:
-    {'04926000020C21424815': 'good', '04926000024C21424815': 'bad'}
-    """
     query = """
         SELECT 
-            ms.sn,
+            TRIM(ms.sn),
             tn.compute_name
         FROM public.goldensample_mastersample ms
         INNER JOIN public.goldensample_typename tn 
@@ -75,12 +71,10 @@ def get_goldens_for_test(conn, internal_code: str) -> dict[str, str]:
             ON ms.id = msec.mastersample_id
         INNER JOIN public.goldensample_endcode ec 
             ON msec.endcode_id = ec.id
-        WHERE ec.code = %s
-          AND ms.expire_date >= CURRENT_DATE;
+        WHERE TRIM(ec.code) = %s;
     """
     with conn.cursor() as cur:
-        cur.execute(query, (internal_code,))
+        cur.execute(query, (str(internal_code).strip(),))
         rows = cur.fetchall()
 
-    # Zamienia listę krotek [(sn, compute_name), ...] na słownik {sn: compute_name}
     return dict(rows)
