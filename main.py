@@ -415,7 +415,8 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
                     confirm_res = row.get("confirmresult")
 
                     final_res = confirm_res if confirm_res is not None else report_res
-                    aoi_pass = (final_res == 1)
+
+                    aoi_pass = (final_res == 0) if final_res is not None else False
 
                     sn_entries.append((
                         pallet_id,
@@ -451,7 +452,6 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
 
     logger.info("[%s] Utworzono %d nowych palet z powiązanymi SN.", product, inserted_pallets_count)
     return inserted_pallets_count
-
 
 def get_latest_db_board_id_for_product(cur: psycopg.Cursor, product_host: str) -> int:
     cur.execute("SELECT COALESCE(MAX(db_board_id), 0) AS max_id FROM aidon_palletfullinfo WHERE product = %s;", (product_host,))
