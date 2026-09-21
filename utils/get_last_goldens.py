@@ -1,13 +1,10 @@
 import pyodbc 
 from database import CONNECTION_STRING
+from datetime import datetime
 
-def get_last_goldens_check(
-    goldens_map: dict[str, str], 
-    assembly_form_id: int, 
-    pos_in_rack: int
-) -> set[str]:
+def get_last_goldens_check(goldens_map: dict[str, dict], assembly_form_id: str, pos_in_rack: int, validity_minutes: int = 480):
     if not goldens_map:
-        return set()
+        return {}
 
     golden_sns = list(goldens_map.keys())
     placeholders = ", ".join(["?"] * len(golden_sns))
@@ -21,31 +18,38 @@ def get_last_goldens_check(
         WHERE [MSN] IN ({placeholders})
           AND [PosinRack] = ?
           AND [IdParts] = ?
-          AND [TestDateTime] >= DATEADD(hour, -8, GETDATE())
+          AND [TestDateTime] >= DATEADD(minute, -?, GETDATE())
         ORDER BY [TestDateTime] DESC;
     """
 
-    params = [*golden_sns, pos_in_rack, assembly_form_id]
+    params = [*golden_sns, pos_in_rack, assembly_form_id, validity_minutes]
 
     with pyodbc.connect(CONNECTION_STRING) as mssql_conn:
         with mssql_conn.cursor() as cur:
             cur.execute(query, params)
             rows = cur.fetchall()
 
-    tested_types = set()
+    latest_per_type: dict[str, datetime] = {}
+    
     for row in rows:
-        msn = row[0]
-        sample_type = goldens_map.get(msn)
-        if sample_type:
-            tested_types.add(sample_type)
+        msn = str(row[0]).strip()
+        test_dt = row[2]
+        
+        golden_entry = goldens_map.get(msn)
+        if golden_entry:
+            sample_type = golden_entry["type"]
+            if sample_type and sample_type not in latest_per_type:
+                latest_per_type[sample_type] = test_dt
 
-    return tested_types
+    return latest_per_type
 
-def get_goldens_for_test(conn, internal_code: str) -> dict[str, str]:
+
+def get_goldens_for_test(conn, internal_code: str) -> dict[str, dict]:
     query = """
         SELECT 
             TRIM(ms.sn) AS sn,
-            TRIM(tn.compute_name) AS compute_name
+            TRIM(tn.compute_name) AS compute_name,
+            ms.details
         FROM public.goldensample_mastersample ms
         INNER JOIN public.goldensample_typename tn 
             ON ms.master_type_id = tn.id
@@ -61,15 +65,19 @@ def get_goldens_for_test(conn, internal_code: str) -> dict[str, str]:
 
     goldens = {}
     for row in rows:
-        # Obsługa zarówno słownika (dict_row), jak i krotki (tuple)
         if isinstance(row, dict):
             sn = str(row.get("sn", "")).strip()
             c_name = str(row.get("compute_name", "")).strip()
+            details = row.get("details")
         else:
             sn = str(row[0]).strip()
             c_name = str(row[1]).strip()
+            details = row[2]
 
         if sn:
-            goldens[sn] = c_name
+            goldens[sn] = {
+                "type": c_name,
+                "details": str(details) if details is not None else ""
+            }
 
     return goldens

@@ -8,6 +8,7 @@ from utils.check_bin import process_single_msn
 from utils.batery import main_util_batery_check
 from utils.blocking_machine import get_assembly_form, get_counted_fails, get_counter, increment_or_create_counter, pass_password
 from utils.get_last_goldens import get_last_goldens_check, get_goldens_for_test
+from datetime import datetime
 
 from collections import defaultdict
 
@@ -68,7 +69,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         aoi_sync_task,
         trigger="interval",
-        seconds=1,
+        seconds=2,
         id="aoi_sync_job",
         replace_existing=True,
         max_instances=1,
@@ -547,46 +548,92 @@ def get_recent_aoi_boards():
 
     return {"count": len(records), "data": records}
 
+import re
+
+def extract_machine_id_from_details(details: str) -> Optional[str]:
+    if not details:
+        return None
+    
+    match = re.search(r"\\+([^\\]+)\\+", details)
+    if match:
+        return match.group(1).strip()
+    return None
 
 class FWKGoldensPayload(BaseModel):
     sn: str
     site: int
     machine_id: str
     internal_code: str
+    validity_minutes: Optional[int] = None
 
 
 @app.post("/mes/goldens/fwk/check/", status_code=status.HTTP_200_OK)
 def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection = Depends(get_db)):
-    goldens_map: dict[str, str] = get_goldens_for_test(conn, payload.internal_code)
+    goldens_map = get_goldens_for_test(conn, payload.internal_code)
     
     clean_sn = payload.sn.strip()
+    clean_machine_id = payload.machine_id.strip()
 
     if clean_sn in goldens_map:
-        golden_type = goldens_map[clean_sn]
+        golden_info = goldens_map[clean_sn]
+        golden_type = golden_info["type"]
+        details = golden_info.get("details", "")
+
+        expected_machine_id = extract_machine_id_from_details(details)
+
+        if expected_machine_id is not None and expected_machine_id != clean_machine_id:
+            return {
+                "status": status.HTTP_200_OK,
+                "comment": f"Nieodpowiedni wzorzec dla danej maszyny (Wzorzec przypisany do: {expected_machine_id}, bieżąca maszyna: {clean_machine_id})",
+                "result": False,
+                "minutes_remaining": None
+            }
+
         return {
             "status": status.HTTP_200_OK,
             "comment": f"Testujesz Wzorzec ({golden_type})",
-            "result": True
+            "result": True,
+            "minutes_remaining": None
         }
 
-    tested_types: set[str] = get_last_goldens_check(
+    validity_minutes = payload.validity_minutes if payload.validity_minutes and payload.validity_minutes > 0 else 480
+
+    latest_check_per_type = get_last_goldens_check(
         goldens_map=goldens_map,
         assembly_form_id=payload.internal_code,
-        pos_in_rack=payload.site
+        pos_in_rack=payload.site,
+        validity_minutes=validity_minutes
     )
 
     required_types = {"pass", "fail"}
+    tested_types = set(latest_check_per_type.keys())
     has_both_goldens = required_types.issubset(tested_types)
 
     if not has_both_goldens:
         return {
             "status": status.HTTP_200_OK,
-            "comment": "Nalezy przetestowac wzorce [minelo wiecej niz 8godzin]",
-            "result": False
+            "comment": f"Nalezy przetestowac wzorce [minelo wiecej niz {validity_minutes} minut]",
+            "result": False,
+            "minutes_remaining": 0
         }
+
+    now = datetime.now()
+    remaining_list = []
+    
+    for req_type in required_types:
+        test_dt = latest_check_per_type[req_type]
+        if test_dt.tzinfo is not None:
+            test_dt = test_dt.replace(tzinfo=None)
+            
+        elapsed_minutes = int((now - test_dt).total_seconds() / 60)
+        remaining = max(0, validity_minutes - elapsed_minutes)
+        remaining_list.append(remaining)
+
+    minutes_remaining = min(remaining_list)
 
     return {
         "status": status.HTTP_200_OK,
-        "comment": "Pass",
-        "result": True
+        "comment": f"Pass [Pozostalo: {minutes_remaining} min]",
+        "result": True,
+        "minutes_remaining": minutes_remaining
     }
