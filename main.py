@@ -394,22 +394,13 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
                     created_at
                 )
                 VALUES (%s, %s, %s, FALSE, NOW())
-                ON CONFLICT (product, db_board_id, pallet_number) DO NOTHING
+                ON CONFLICT (product, db_board_id, pallet_number) 
+                DO UPDATE SET product = EXCLUDED.product
                 RETURNING id;
                 """,
                 (db_board_id, pallet_number, product),
             )
             pallet_row = cur.fetchone()
-
-            if not pallet_row:
-                logger.warning(
-                    "[%s] Paleta %s (db_board_id=%s) już istnieje w bazie. Pomijam.",
-                    product,
-                    pallet_number,
-                    db_board_id,
-                )
-                continue
-
             pallet_id = pallet_row["id"] if isinstance(pallet_row, dict) else pallet_row[0]
 
             sorted_boards = sorted(board_records, key=lambda x: int(x.get("subboardid", 0)))
@@ -419,17 +410,21 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
                 sub_id = int(row.get("subboardid", 0))
                 barcode = row.get("barcode")
 
-                if sub_id > 0 and barcode:
+                if sub_id > 0 and barcode and barcode.strip():
                     report_res = row.get("reportresult")
                     confirm_res = row.get("confirmresult")
-                    aoi_pass = (report_res == 1) or (confirm_res == 1)
+
+                    final_res = confirm_res if confirm_res is not None else report_res
+                    aoi_pass = (final_res == 1)
 
                     sn_entries.append((
                         pallet_id,
                         barcode.strip(),
                         sub_id,
-                        None,
                         aoi_pass,
+                        None,
+                        None,
+                        aoi_pass
                     ))
 
             if sn_entries:
@@ -439,10 +434,13 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
                         pallet_id,
                         sn,
                         place_num,
+                        aoi_result,
                         ict_result,
+                        fvt_result,
                         full_result
                     )
-                    VALUES (%s, %s, %s, %s, %s);
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING;
                     """,
                     sn_entries,
                 )
@@ -570,7 +568,6 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
             "comment": f"Testujesz Wzorzec ({golden_type})",
             "result": True
         }
-
 
     tested_types: set[str] = get_last_goldens_check(
         goldens_map=goldens_map,
