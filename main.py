@@ -602,6 +602,7 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
         goldens_map=goldens_map,
         assembly_form_id=payload.internal_code,
         pos_in_rack=payload.site,
+        id_phase=clean_machine_id,
         validity_minutes=validity_minutes
     )
 

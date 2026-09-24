@@ -2,7 +2,7 @@ import pyodbc
 from database import CONNECTION_STRING
 from datetime import datetime
 
-def get_last_goldens_check(goldens_map: dict[str, dict], assembly_form_id: str, pos_in_rack: int, validity_minutes: int = 480):
+def get_last_goldens_check(goldens_map: dict[str, dict], assembly_form_id: str, pos_in_rack: int, id_phase: str, validity_minutes: int = 480):
     if not goldens_map:
         return {}
 
@@ -18,11 +18,12 @@ def get_last_goldens_check(goldens_map: dict[str, dict], assembly_form_id: str, 
         WHERE [MSN] IN ({placeholders})
           AND [PosinRack] = ?
           AND [IdParts] = ?
+          AND [IdPhase] = ?
           AND [TestDateTime] >= DATEADD(minute, -?, GETDATE())
         ORDER BY [TestDateTime] DESC;
     """
 
-    params = [*golden_sns, pos_in_rack, assembly_form_id, validity_minutes]
+    params = [*golden_sns, pos_in_rack, assembly_form_id, id_phase, validity_minutes]
 
     with pyodbc.connect(CONNECTION_STRING) as mssql_conn:
         with mssql_conn.cursor() as cur:
@@ -33,13 +34,29 @@ def get_last_goldens_check(goldens_map: dict[str, dict], assembly_form_id: str, 
     
     for row in rows:
         msn = str(row[0]).strip()
+        result_raw = row[1]
         test_dt = row[2]
         
         golden_entry = goldens_map.get(msn)
-        if golden_entry:
-            sample_type = golden_entry["type"]
-            if sample_type and sample_type not in latest_per_type:
-                latest_per_type[sample_type] = test_dt
+        if not golden_entry:
+            continue
+            
+        sample_type = str(golden_entry.get("type", "")).strip().lower()
+        if not sample_type or sample_type in latest_per_type:
+            continue
+        
+        try:
+            result_int = int(result_raw)
+        except (TypeError, ValueError):
+            continue
+
+        is_valid_test = (
+            (sample_type == "pass" and result_int == 1) or
+            (sample_type == "fail" and result_int == 0)
+        )
+
+        if is_valid_test:
+            latest_per_type[sample_type] = test_dt
 
     return latest_per_type
 
