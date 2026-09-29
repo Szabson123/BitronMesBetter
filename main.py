@@ -598,9 +598,15 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
 
     validity_minutes = payload.validity_minutes if payload.validity_minutes and payload.validity_minutes > 0 else 480
 
+    applicable_goldens = {}
+    for sn, data in goldens_map.items():
+        exp_m = extract_machine_id_from_details(data.get("details", ""))
+        if exp_m is None or exp_m == clean_machine_id:
+            applicable_goldens[sn] = data
+
     standalone_entry = next(
         (
-            (sn, data) for sn, data in goldens_map.items() 
+            (sn, data) for sn, data in applicable_goldens.items() 
             if "STANDALONE" in data.get("details", "").upper()
         ),
         None
@@ -611,7 +617,7 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
         target_goldens_map = {standalone_sn: standalone_data}
         required_types = {standalone_data.get("type", "").strip().lower()}
     else:
-        target_goldens_map = goldens_map
+        target_goldens_map = applicable_goldens
         required_types = {"pass", "fail"}
 
     latest_check_per_type = get_last_goldens_check(
