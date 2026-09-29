@@ -598,22 +598,43 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
 
     validity_minutes = payload.validity_minutes if payload.validity_minutes and payload.validity_minutes > 0 else 480
 
+    standalone_entry = next(
+        (
+            (sn, data) for sn, data in goldens_map.items() 
+            if "STANDALONE" in data.get("details", "").upper()
+        ),
+        None
+    )
+
+    if standalone_entry:
+        standalone_sn, standalone_data = standalone_entry
+        target_goldens_map = {standalone_sn: standalone_data}
+        required_types = {standalone_data.get("type", "").strip().lower()}
+    else:
+        target_goldens_map = goldens_map
+        required_types = {"pass", "fail"}
+
     latest_check_per_type = get_last_goldens_check(
-        goldens_map=goldens_map,
+        goldens_map=target_goldens_map,
         assembly_form_id=payload.internal_code,
         pos_in_rack=payload.site,
         id_phase=clean_machine_id,
         validity_minutes=validity_minutes
     )
 
-    required_types = {"pass", "fail"}
     tested_types = set(latest_check_per_type.keys())
-    has_both_goldens = required_types.issubset(tested_types)
+    has_required_goldens = required_types.issubset(tested_types)
 
-    if not has_both_goldens:
+    if not has_required_goldens:
+        missing = ", ".join(required_types - tested_types)
+        comment_msg = (
+            f"Nalezy przetestowac wzorzec [{missing}] [minelo wiecej niz {validity_minutes} minut]"
+            if standalone_entry
+            else f"Nalezy przetestowac wzorce [minelo wiecej niz {validity_minutes} minut]"
+        )
         return {
             "status": status.HTTP_200_OK,
-            "comment": f"Nalezy przetestowac wzorce [minelo wiecej niz {validity_minutes} minut]",
+            "comment": comment_msg,
             "result": False,
             "minutes_remaining": 0
         }
@@ -630,7 +651,7 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
         remaining = max(0, validity_minutes - elapsed_minutes)
         remaining_list.append(remaining)
 
-    minutes_remaining = min(remaining_list)
+    minutes_remaining = min(remaining_list) if remaining_list else 0
 
     return {
         "status": status.HTTP_200_OK,
