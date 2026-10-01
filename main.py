@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, status, HTTPException, Response
+from fastapi import FastAPI, Depends, status, HTTPException, Response, Query
 from utils.collector_ends import main_util_collector_program_names
 from utils.lighting_linked_serial import main_lighting_linked_serials
 from utils.check_bin import process_single_msn
@@ -9,6 +9,8 @@ from utils.batery import main_util_batery_check
 from utils.blocking_machine import get_assembly_form, get_counted_fails, get_counter, increment_or_create_counter, pass_password
 from utils.get_last_goldens import get_last_goldens_check, get_goldens_for_test
 from datetime import datetime
+
+import pyodbc
 
 from collections import defaultdict
 
@@ -18,7 +20,7 @@ from pymysql.cursors import DictCursor
 from aidon_utils.get_pallet_info_spea import get_sns_from_pallets
 
 from models import BateryCheckRequest, UnlockRequest
-from typing import List, Optional, Tuple, Literal, Dict
+from typing import List, Optional, Tuple, Literal, Dict, Any
 from database import CONNECTION_STRING, CONNECTION_STRING_LOCAL_POSTGRES, MYSQL_DATABASES, MYSQL_CONFIG
 from pyodbc import connect
 import pymysql
@@ -665,3 +667,133 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
         "result": True,
         "minutes_remaining": minutes_remaining
     }
+
+class GoldenCheckStatus(BaseModel):
+    sn: str
+    type: str
+    is_standalone: bool
+    last_tested_at: Optional[datetime] = None
+    last_result_raw: Optional[Any] = None
+    is_valid_result: Optional[bool] = None
+    minutes_ago: Optional[int] = None
+
+class MachineGoldensHistoryResponse(BaseModel):
+    internal_code: str
+    machine_id: str
+    goldens: List[GoldenCheckStatus]
+
+
+def get_goldens_test_history(goldens_map: dict[str, dict], internal_code: str, machine_id: str) -> dict[str, dict]:
+    if not goldens_map:
+        return {}
+
+    golden_sns = list(goldens_map.keys())
+    placeholders = ", ".join(["?"] * len(golden_sns))
+
+    query = f"""
+        WITH RankedLogs AS (
+            SELECT 
+                [MSN],
+                [Result],
+                [TestDateTime],
+                ROW_NUMBER() OVER (PARTITION BY [MSN] ORDER BY [TestDateTime] DESC) as rn
+            FROM [Measure].[dbo].[HeaderDataLog]
+            WHERE [MSN] IN ({placeholders})
+              AND [IdParts] = ?
+              AND [IdPhase] = ?
+        )
+        SELECT [MSN], [Result], [TestDateTime]
+        FROM RankedLogs
+        WHERE rn = 1;
+    """
+
+    params = [*golden_sns, internal_code, machine_id]
+
+    history: dict[str, dict] = {}
+    with pyodbc.connect(CONNECTION_STRING) as mssql_conn:
+        with mssql_conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+    for row in rows:
+        msn = str(row[0]).strip()
+        history[msn] = {
+            "result_raw": row[1],
+            "test_dt": row[2]
+        }
+
+    return history
+
+
+@app.get("/mes/goldens/fwk/history/", response_model=MachineGoldensHistoryResponse, status_code=status.HTTP_200_OK)
+def get_fwk_goldens_history(
+    internal_code: str = Query(..., description="Kod wyrobu / IdParts"),
+    machine_id: str = Query(..., description="Identyfikator maszyny / IdPhase"),
+    conn: psycopg.Connection = Depends(get_db)
+):
+    clean_internal_code = internal_code.strip()
+    clean_machine_id = machine_id.strip()
+
+    goldens_map = get_goldens_for_test(conn, clean_internal_code)
+
+    applicable_goldens = {}
+    for sn, data in goldens_map.items():
+        exp_m = extract_machine_id_from_details(data.get("details", ""))
+        if exp_m is None or exp_m == clean_machine_id:
+            applicable_goldens[sn] = data
+
+    test_history = get_goldens_test_history(
+        goldens_map=applicable_goldens,
+        internal_code=clean_internal_code,
+        machine_id=clean_machine_id
+    )
+
+    now = datetime.now()
+    results = []
+
+    for sn, golden_info in applicable_goldens.items():
+        g_type = golden_info.get("type", "").strip().lower()
+        details_str = golden_info.get("details", "") or ""
+        is_standalone = "STANDALONE" in details_str.upper()
+
+        hist = test_history.get(sn)
+
+        last_dt = None
+        result_raw = None
+        is_valid = None
+        minutes_ago = None
+
+        if hist:
+            last_dt = hist["test_dt"]
+            result_raw = hist["result_raw"]
+
+            if last_dt is not None:
+                calc_dt = last_dt.replace(tzinfo=None) if last_dt.tzinfo else last_dt
+                minutes_ago = max(0, int((now - calc_dt).total_seconds() / 60))
+
+            try:
+                res_int = int(result_raw)
+                is_valid = (
+                    (g_type == "pass" and res_int == 1) or 
+                    (g_type == "fail" and res_int == 0)
+                )
+            except (TypeError, ValueError):
+                is_valid = False
+
+        results.append(
+            GoldenCheckStatus(
+                sn=sn,
+                type=golden_info.get("type", ""),
+                is_standalone=is_standalone,
+                last_tested_at=last_dt,
+                last_result_raw=result_raw,
+                is_valid_result=is_valid,
+                minutes_ago=minutes_ago
+            )
+        )
+
+    return MachineGoldensHistoryResponse(
+        internal_code=clean_internal_code,
+        machine_id=clean_machine_id,
+        goldens=results
+    )
