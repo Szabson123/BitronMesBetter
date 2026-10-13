@@ -28,6 +28,7 @@ import asyncio
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
+import re
 
 pools = {}
 scheduler = AsyncIOScheduler()
@@ -548,16 +549,28 @@ def get_recent_aoi_boards():
 
     return {"count": len(records), "data": records}
 
-import re
 
 def extract_machine_id_from_details(details: str) -> Optional[str]:
     if not details:
         return None
-    
     match = re.search(r"\\+([^\\]+)\\+", details)
-    if match:
-        return match.group(1).strip()
+    return match.group(1).strip() if match else None
+
+
+def get_standalone_golden_info(goldens_map: dict[str, dict], machine_id: str) -> Optional[dict]:
+    clean_target = machine_id.strip().upper()
+    pattern = re.compile(r"STANDALONE\s*-\s*\[([A-Za-z0-9_-]+)\]", re.IGNORECASE)
+
+    for sn, info in goldens_map.items():
+        details = info.get("details", "")
+        match = pattern.search(details)
+        if match and match.group(1).strip().upper() == clean_target:
+            return {
+                "sn": sn,
+                "type": str(info.get("type", "")).strip().lower()
+            }
     return None
+
 
 class FWKGoldensPayload(BaseModel):
     sn: str
@@ -581,7 +594,7 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
 
         expected_machine_id = extract_machine_id_from_details(details)
 
-        if expected_machine_id is not None and expected_machine_id != clean_machine_id:
+        if expected_machine_id is not None and expected_machine_id.upper() != clean_machine_id.upper():
             return {
                 "status": status.HTTP_200_OK,
                 "comment": f"Nieodpowiedni wzorzec dla danej maszyny (Wzorzec przypisany do: {expected_machine_id}, bieżąca maszyna: {clean_machine_id})",
@@ -598,22 +611,32 @@ def fwk_master_sample_check(payload: FWKGoldensPayload, conn: psycopg.Connection
 
     validity_minutes = payload.validity_minutes if payload.validity_minutes and payload.validity_minutes > 0 else 480
 
+    standalone_info = get_standalone_golden_info(goldens_map, clean_machine_id)
+
+    if standalone_info:
+        required_types = {standalone_info["type"]}
+        active_goldens_map = {standalone_info["sn"]: goldens_map[standalone_info["sn"]]}
+    else:
+        required_types = {"pass", "fail"}
+        active_goldens_map = goldens_map
+
     latest_check_per_type = get_last_goldens_check(
-        goldens_map=goldens_map,
+        goldens_map=active_goldens_map,
         assembly_form_id=payload.internal_code,
         pos_in_rack=payload.site,
         id_phase=clean_machine_id,
         validity_minutes=validity_minutes
     )
 
-    required_types = {"pass", "fail"}
     tested_types = set(latest_check_per_type.keys())
-    has_both_goldens = required_types.issubset(tested_types)
+    has_required_goldens = required_types.issubset(tested_types)
 
-    if not has_both_goldens:
+    if not has_required_goldens:
+        missing_types = required_types - tested_types
+        missing_desc = " / ".join(missing_types).upper()
         return {
             "status": status.HTTP_200_OK,
-            "comment": f"Nalezy przetestowac wzorce [minelo wiecej niz {validity_minutes} minut]",
+            "comment": f"Nalezy przetestowac wzorce ({missing_desc}) [minelo wiecej niz {validity_minutes} minut]",
             "result": False,
             "minutes_remaining": 0
         }
