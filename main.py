@@ -342,6 +342,7 @@ def aidon_fct_metrology_pallet_check(payload: FVTPalletRequest, conn: psycopg.Co
             WHERE UPPER(pallet_number) = %s AND full_used = FALSE 
             ORDER BY created_at DESC 
             LIMIT 1
+            FOR UPDATE
             """,
             (pallet_num,),
         )
@@ -366,24 +367,19 @@ def aidon_fct_metrology_pallet_check(payload: FVTPalletRequest, conn: psycopg.Co
         )
         rows = cur.fetchall()
 
-    items_dict = {}
-    for row in rows:
-        sn = row["sn"]
-        place_num = row["place_num"]
-        full_res = row["full_result"]
-
-        prev_result = "PASS" if full_res is True else "FAIL"
-
-        items_dict[sn] = FVTItemDetail(
-            place_num=place_num,
-            previous_station_result=prev_result,
-        )
+        items_dict = {}
+        for row in rows:
+            prev_result = "PASS" if row["full_result"] is True else "FAIL"
+            items_dict[row["sn"]] = FVTItemDetail(
+                place_num=row["place_num"],
+                previous_station_result=prev_result,
+            )
 
         mark_pallet_as_used(cur, pallet_id)
 
     conn.commit()
-    
-    return FVTPalletResponse(pallet_number=payload.pallet_number, items=items_dict,)
+
+    return FVTPalletResponse(pallet_number=payload.pallet_number, items=items_dict)
 
 
 def close_previous_active_pallets(cur: psycopg.Cursor, pallet_number: str, db_board_id: int) -> int:
