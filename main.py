@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         aoi_sync_task,
         trigger="interval",
-        seconds=2000000,
+        seconds=2,
         id="aoi_sync_job",
         replace_existing=True,
         max_instances=1,
