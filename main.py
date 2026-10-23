@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         aoi_sync_task,
         trigger="interval",
-        seconds=2,
+        seconds=2000000,
         id="aoi_sync_job",
         replace_existing=True,
         max_instances=1,
@@ -192,38 +192,61 @@ class FVTPalletResponse(BaseModel):
 class HTTPError(BaseModel):
     detail: str
 
+def mark_pallet_as_used(cur: psycopg.Cursor, pallet_id: int) -> None:
+    cur.execute(
+        """
+        UPDATE aidon_palletfullinfo
+        SET full_used = TRUE
+        WHERE id = %s AND full_used = FALSE
+        RETURNING id
+        """,
+        (pallet_id,),
+    )
 
-def process_pallet_check_in(pallet: str, conn: psycopg.Connection) -> dict:
+    if cur.fetchone() is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Pallet {pallet_id} was already marked as used",
+        )
+
+def process_pallet_check_in(pallet: str, conn: psycopg.Connection, mark_used: bool = False) -> dict:
     with conn.cursor(row_factory=dict_row) as cursor:
         data = get_sns_from_pallets(cursor, pallet)
-        
-    if not data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Active pallet not found: {pallet}"
-        )
-        
-    first_row = data[0]
-    return {
-        "pallet_number": pallet,
-        "pallet_id": first_row["pallet_id"],
-        "db_board_id": first_row["db_board_id"],
-        "boards": [
-            {
-                "sn": row["sn"],
-                "place_num": row["place_num"],
-            }
-            for row in data if row.get("sn") is not None
-        ]
-    }
+
+        if not data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Active pallet not found: {pallet}"
+            )
+
+        first_row = data[0]
+        result = {
+            "pallet_number": pallet,
+            "pallet_id": first_row["pallet_id"],
+            "db_board_id": first_row["db_board_id"],
+            "boards": [
+                {"sn": row["sn"], "place_num": row["place_num"]}
+                for row in data if row.get("sn") is not None
+            ],
+        }
+
+        if mark_used:
+            mark_pallet_as_used(cursor, first_row["pallet_id"])
+
+    if mark_used:
+        conn.commit()
+
+    return result
+
 
 @app.post("/mes/aidon/ict/pallet/in/")
 def aidon_spea_pallet_check_in(payload: PalletInRequest, conn: psycopg.Connection = Depends(get_db)):
     return process_pallet_check_in(payload.pallet, conn)
 
+
 @app.post("/mes/aidon/fct/application/pallet/")
 def aidon_fct_application_pallet(payload: PalletInRequest, conn: psycopg.Connection = Depends(get_db)):
-    return process_pallet_check_in(payload.pallet, conn)
+    return process_pallet_check_in(payload.pallet, conn, mark_used=True)
 
 
 def normalize_and_validate_items(items: List[SnSRequest]) -> List[Tuple[str, bool]]:
@@ -356,7 +379,25 @@ def aidon_fct_metrology_pallet_check(payload: FVTPalletRequest, conn: psycopg.Co
             previous_station_result=prev_result,
         )
 
+        mark_pallet_as_used(cur, pallet_id)
+
+    conn.commit()
+    
     return FVTPalletResponse(pallet_number=payload.pallet_number, items=items_dict,)
+
+
+def close_previous_active_pallets(cur: psycopg.Cursor, pallet_number: str, db_board_id: int) -> int:
+    cur.execute(
+        """
+        UPDATE aidon_palletfullinfo
+        SET full_used = TRUE
+        WHERE UPPER(pallet_number) = UPPER(%s)
+          AND full_used = FALSE
+          AND db_board_id < %s
+        """,
+        (pallet_number, db_board_id),
+    )
+    return cur.rowcount
 
 
 def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product: str, db_name: str | None = None) -> int:
@@ -370,7 +411,7 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
     inserted_pallets_count = 0
 
     with pg_conn.cursor() as cur:
-        for db_board_id, board_records in grouped_boards.items():
+        for db_board_id, board_records in sorted(grouped_boards.items(), key=lambda kv: int(kv[0])):
             pallet_row_data = next(
                 (r for r in board_records if int(r.get("subboardid", -1)) == 0),
                 None
@@ -385,6 +426,13 @@ def create_new_pallet(pg_conn: psycopg.Connection, records: list[dict], product:
                 continue
 
             pallet_number = pallet_row_data["barcode"].strip()
+
+            closed = close_previous_active_pallets(cur, pallet_number, db_board_id)
+            if closed:
+                logger.info(
+                    "[%s] Zamknięto %d starszych aktywnych palet o numerze %s (nowy dbboardid=%s).",
+                    product, closed, pallet_number, db_board_id
+                )
 
             cur.execute(
                 """
