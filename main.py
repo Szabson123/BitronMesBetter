@@ -1,8 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, status, HTTPException, Response
+from fastapi import FastAPI, Depends, status, HTTPException, Response, Request
 from utils.collector_ends import main_util_collector_program_names
+from utils.received_data import extract_parts_info, log_received_data
 from utils.lighting_linked_serial import main_lighting_linked_serials
 from utils.check_bin import process_single_msn
 from utils.batery import main_util_batery_check
@@ -70,7 +71,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         aoi_sync_task,
         trigger="interval",
-        seconds=2,
+        seconds=200000000,
         id="aoi_sync_job",
         replace_existing=True,
         max_instances=1,
@@ -128,6 +129,26 @@ async def check_batery(request_data: BateryCheckRequest):
 
     data = main_util_batery_check(serial_number)
     return data
+
+
+@app.post('/mes/aidon-boxing/receive-data/')
+async def receive_data(request: Request):
+    """Przyjmuje dowolny JSON, wyciąga idParts i msn i zapisuje je do osobnego pliku logu."""
+    try:
+        body = await request.json()
+    except ValueError:
+        logger.warning("receive-data: body nie jest poprawnym JSON-em")
+        return {"status": "ignored", "reason": "body is not valid JSON"}
+
+    id_parts, msn = extract_parts_info(body)
+
+    missing = [name for name, value in (("idParts", id_parts), ("msn", msn)) if value is None]
+    if missing:
+        logger.warning("receive-data: brak pól %s w body", missing)
+        return {"status": "ignored", "reason": "missing fields", "missing": missing}
+
+    log_received_data(id_parts, msn)
+    return {"status": "logged", "idParts": id_parts, "msn": msn}
 
 
 @app.get('/mes/machine-block-info/')
